@@ -4,6 +4,7 @@ import numpy as np
 from scipy.optimize import fsolve
 from scipy.integrate import trapz
 import skaero.atmosphere.coesa as atmo
+from skaero.gasdynamics import shocks
 
 from proptools.convection import rannie_transpiration_cooling
 
@@ -17,9 +18,13 @@ def get_coolant_flux(M_inf, p_inf, T_inf, T_wg_max, T_cool):
     to a high-Mach external flow.
     """
 
-    # Compute the main flow mass flux across the ehat shield
-    # TODO correct for being behind a shock
-    rho = p_inf / (R * T_inf)
+    # Compute the main flow mass flux across the heat shield
+    # Note the freestream airflow will pass through a shock
+    # before reaching the heat shield. But the cooling equations
+    # only depend on the stagnation temperature
+    # the mass flux, which are unchanged by a normal shock.
+    rho = p_inf / (R * T_inf)    # freestream density
+
     v = M_inf * (gamma * R * T_inf)**0.5
     mass_flux_external = rho * v
 
@@ -27,6 +32,7 @@ def get_coolant_flux(M_inf, p_inf, T_inf, T_wg_max, T_cool):
     mu = 1.7e-5    # Viscosity of air [units: pascal second].
     Re_bulk = rho * v * L / mu
     Pr_film = 1.
+    # print('Re = {:.4g}'.format(Re_bulk))
 
     # Adiabatic wall temperature for external flow
     r = 0.85    # recovery factory
@@ -39,8 +45,10 @@ def get_coolant_flux(M_inf, p_inf, T_inf, T_wg_max, T_cool):
             cool_flux_fraction, Pr_film, Re_bulk)
         T_wg = (T_aw - T_cool) / temp_ratio + T_cool
         return T_wg - T_wg_max
-
-    cool_flux_fraction = fsolve(solve_fun, 1e-3)[0]
+    x, infodict, ier, mesg = fsolve(solve_fun, 0, full_output=True)
+    if ier != 1:
+        print(mesg)
+    cool_flux_fraction = x[0]
     return cool_flux_fraction * mass_flux_external
 
 def atmo_temperature_and_pressure(alt):
@@ -76,7 +84,7 @@ def shuttle_traj():
     # from https://physics.stackexchange.com/questions/377212/why-do-spaceships-heat-up-when-entering-earth-but-not-when-exiting
     time = np.linspace(0, 23*60)
     alt = 80 * (time[-1] - time)/time[-1] + 20
-    velocity = 7500 * (time[-1] - time)/time[-1]
+    velocity = 7.5e3 * (time[-1] - time)/time[-1] + 300
 
     p_inf = np.zeros(len(time))
     T_inf = np.zeros(len(time))
@@ -105,7 +113,7 @@ def shuttle_traj():
     steel_thickness = 1e-3    # [units: meter].
     steel_mass_per_area = steel_density * steel_thickness
     print('+ steel_sheet = {:.1f} kg m^-2'.format(steel_mass_per_area))
-    print('transp. heat shield total = {:.3} kg^-2'.format(
+    print('transp. heat shield total = {:.3} kg m^-2'.format(
         steel_mass_per_area + coolant_used_per_area))
 
 
@@ -119,27 +127,30 @@ def shuttle_traj():
 
     # Plot results
     plt.figure()
-    plt.subplot(4, 1, 1)
+    ax1 = plt.subplot(4, 1, 1)
     plt.plot(time, p_inf * 1e-3)
     plt.ylabel('Static pressure [kPa]')
     plt.grid()
 
-    plt.subplot(4, 1, 2)
+    plt.subplot(4, 1, 2, sharex=ax1)
     plt.plot(time, T_inf, color='blue', label='static')
     plt.plot(time, T_aw, color='red', label='adib. wall')
+    plt.axhline(T_wg_max, color='black', label='max. wall temp')
     plt.grid()
     plt.legend()
     plt.ylabel('Temperature [K]')
+    plt.ylim([0, 5000])
 
-    plt.subplot(4, 1, 3)
+    plt.subplot(4, 1, 3, sharex=ax1)
     plt.plot(time, M_inf)
     plt.grid()
     plt.ylabel('Mach number [-]')
 
-    plt.subplot(4, 1, 4)
+    plt.subplot(4, 1, 4, sharex=ax1)
     plt.plot(time, coolant_flux)
     plt.grid()
     plt.ylabel('Coolant flux [kg m^-2 s^-1]')
+    plt.xlabel('Time [s]')
 
 
 def simple_demo():
@@ -152,6 +163,6 @@ def simple_demo():
     print('coolant flux = {:.4f} kg m^-2 s^-1'.format(coolant_flux))
 
 if __name__ == '__main__':
-    simple_demo()
+    # simple_demo()
     shuttle_traj()
     plt.show()
